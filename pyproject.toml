@@ -1,0 +1,17 @@
+[project]
+name = "chaospinn"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.12",
+    "pydantic>=2.5.3",
+    "uvicorn>=0.25.0",
+    "deepxde>=1.13.2",
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.4",
+    "scipy>=1.13.0",
+    "plotly>=5.17.0",
+]
+
