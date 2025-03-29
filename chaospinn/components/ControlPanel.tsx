@@ -6,11 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
-import { Play, Pause, RefreshCw } from 'lucide-react';
+import { Play, Pause, RefreshCw, AlertCircle } from 'lucide-react';
 import { updateSimulationParams } from '@/lib/api';
 
 export default function ControlPanel() {
   const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useState({
     timeStep: 0.01,
     spatialPoints: 128,
@@ -21,14 +22,29 @@ export default function ControlPanel() {
     const newParams = { ...params, [param]: value };
     setParams(newParams);
     try {
-      await updateSimulationParams(newParams);
+      const result = await updateSimulationParams(newParams);
+      if (!result) {
+        setError('Failed to update parameters. Please ensure the backend server is running.');
+      } else {
+        setError(null);
+      }
     } catch (error) {
       console.error('Failed to update parameters:', error);
+      setError('Failed to update parameters. Please ensure the backend server is running.');
     }
   };
 
   return (
     <div className="space-y-6">
+      {error && (
+        <Card className="p-4 border-destructive bg-destructive/10">
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="w-5 h-5" />
+            <p>{error}</p>
+          </div>
+        </Card>
+      )}
+
       <div className="flex items-center gap-4">
         <Button
           variant={isRunning ? "destructive" : "default"}
