@@ -15,7 +15,7 @@ def load_lyapunov_data(download_path):
     Extract and load Lyapunov exponent data from downloaded zip files.
     
     Parameters:
-    download_path: Path to the downloads folder
+    download_path: Path to the data folder
     
     Returns:
     data_periodic: Dictionary with domain sizes and Lyapunov exponents for periodic case
@@ -123,7 +123,7 @@ def simulate_ks(L=50, N=512, tmax=100, dt=0.25):
     return sol.t, x, sol.y.T
 
 # Path to the downloads folder
-download_path = os.path.expanduser("~/Downloads")
+download_path = os.path.join(r"ChaosPINN\visualization\data")
 
 # Load Lyapunov exponent data from zip files
 try:
