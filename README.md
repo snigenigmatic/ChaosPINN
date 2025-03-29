@@ -19,16 +19,18 @@ Traditional numerical solvers struggle with chaotic systems due to computational
 We train a **PINN using PyTorch** to learn the underlying physics of the KS equation by minimizing both data loss and physics-based constraints. Our model directly enforces the governing PDE as a loss term, leading to better generalization and robustness.
 
 ### **Kuramoto–Sivashinsky Equation:**
-\[ \frac{\partial u}{\partial t} + u \frac{\partial u}{\partial x} + \frac{\partial^2 u}{\partial x^2} + \frac{\partial^4 u}{\partial x^4} = 0 \]
+$$
+\frac{\partial u}{\partial t} + u \frac{\partial u}{\partial x} + \frac{\partial^2 u}{\partial x^2} + \frac{\partial^4 u}{\partial x^4} = 0
+$$
 
 This equation exhibits chaotic behavior, making it an ideal test case for evaluating PINNs against traditional solvers.
 
 ---
 
-## 🏗️ Implementation Stack
+## 🏠 Implementation Stack
 - **Deep Learning Framework**: PyTorch ⚡
 - **PINN Training**: Autograd-based physics loss functions 📉
-- **Numerical Baseline**: Finite Difference Method (FDM) for comparison 🧮
+- **Numerical Baseline**: Finite Difference Method (FDM) for comparison 🧪
 - **Visualization**: Matplotlib & Plotly for 2D/3D wave evolution 🌊
 
 ---
@@ -69,23 +71,19 @@ $ python visualize.py
 ---
 
 ## 🏆 Why This Project Stands Out
-✅ **Stunning Visuals** – Chaos in action, animated! 🎥  
-✅ **Scalable & Efficient** – PINNs offer a data-efficient alternative to traditional solvers 🚀  
-✅ **Multi-Domain Impact** – Can extend to other nonlinear chaotic systems 🔥  
+💯 **Stunning Visuals** – Chaos in action, animated! 🎥  
+💯 **Scalable & Efficient** – PINNs offer a data-efficient alternative to traditional solvers 🚀  
+💯 **Multi-Domain Impact** – Can extend to other nonlinear chaotic systems 🔥  
 
 ---
 
-## 📜 Authors
-- **Aditya** (@yourgithub) – ML & PINN Development 🧠
-- **Anagha** (@github) – PINN Research & Optimization ⚙️
-- **Kaustubh** (@github) – Web Integration & UI/UX 🎨
-- **Purandar** (@github) – Data Processing & Visualization 📊
+## 🌟 Authors
+- **Aditya** - [LinkedIn](https://www.linkedin.com/in/aditya-sharma-pes) | [GitHub](https://github.com/Sharma-Aditya7) - ML & PINN Development 🧠
+- **Anagha** - [LinkedIn](https://www.linkedin.com/in/anagha-rao-132b82287) | [GitHub](https://github.com/Anagha-Rao-53) - PINN Research & Optimization ⚙️
+- **Kaustubh** - [LinkedIn](https://www.linkedin.com/in/c-kaustubh-413b77279) | [GitHub](https://github.com/snigenigmatic) - Web Integration & UI/UX 🎨
+- **Purandar** - [LinkedIn](https://www.linkedin.com/in/purandar-puneet-918b92192) | [GitHub](https://github.com/PP-695) - Data Processing & Visualization 📊
 
 ---
 
-## 📩 Contact & Contributions
+## 👥 Contact & Contributions
 We welcome contributions! Feel free to fork this repo, submit PRs, or reach out. 🚀
-
-📧 Email: your@email.com  
-🔗 LinkedIn: [Your Profile](https://linkedin.com/in/yourprofile)  
-🐦 Twitter: [@yourhandle](https://twitter.com/yourhandle)
