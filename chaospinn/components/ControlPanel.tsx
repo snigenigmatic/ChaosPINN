@@ -21,6 +21,7 @@ export default function ControlPanel() {
   const handleParamChange = async (param: string, value: number) => {
     const newParams = { ...params, [param]: value };
     setParams(newParams);
+    
     try {
       const result = await updateSimulationParams(newParams);
       if (!result) {
