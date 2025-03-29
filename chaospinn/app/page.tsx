@@ -1,8 +1,8 @@
 "use client";
-
+  
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Brain, Waves, Settings } from 'lucide-react';
+import { Brain, Waves, Settings, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,16 +11,23 @@ import ControlPanel from '@/components/ControlPanel';
 import { fetchSimulationData } from '@/lib/api';
 
 export default function Home() {
-  const [simulationData, setSimulationData] = useState(null); 
+  const [simulationData, setSimulationData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
       try {
         const data = await fetchSimulationData();
-        setSimulationData(data);
+        if (data) {
+          setSimulationData(data);
+          setError(null);
+        } else {
+          setError('Unable to connect to the simulation server. Please ensure the FastAPI backend is running on http://localhost:8000');
+        }
       } catch (error) {
         console.error('Failed to fetch simulation data:', error);
+        setError('Unable to connect to the simulation server. Please ensure the FastAPI backend is running on http://localhost:8000');
       } finally {
         setLoading(false);
       }
@@ -46,6 +53,15 @@ export default function Home() {
           </p>
         </header>
 
+        {error && (
+          <Card className="mb-8 p-4 border-destructive bg-destructive/10">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="w-5 h-5" />
+              <p>{error}</p>
+            </div>
+          </Card>
+        )}
+
         <Tabs defaultValue="visualization" className="space-y-4">
           <TabsList className="grid w-full grid-cols-2 lg:w-[400px]">
             <TabsTrigger value="visualization" className="flex items-center gap-2">
@@ -60,7 +76,13 @@ export default function Home() {
 
           <TabsContent value="visualization" className="space-y-4">
             <Card className="p-0 overflow-hidden aspect-[16/9] relative">
-              <ThreeScene simulationData={simulationData} />
+              {loading ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                  <p className="text-muted-foreground">Loading simulation...</p>
+                </div>
+              ) : (
+                <ThreeScene simulationData={simulationData} />
+              )}
             </Card>
           </TabsContent>
 

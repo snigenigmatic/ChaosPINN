@@ -10,11 +10,21 @@ export const api = axios.create({
 });
 
 export const fetchSimulationData = async () => {
-  const response = await api.get('/simulation');
-  return response.data;
+  try {
+    const response = await api.get('/simulation');
+    return response.data;
+  } catch (error) {
+    console.error('Failed to fetch simulation data:', error);
+    return null;
+  }
 };
 
 export const updateSimulationParams = async (params: any) => {
-  const response = await api.post('/simulation/update', params);
-  return response.data;
+  try {
+    const response = await api.post('/simulation/update', params);
+    return response.data;
+  } catch (error) {
+    console.error('Failed to update simulation parameters:', error);
+    return null;
+  }
 };
