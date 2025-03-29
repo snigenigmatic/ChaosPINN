@@ -8,19 +8,29 @@ import zipfile
 import tempfile
 import re
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
 # PINN model for Kuramoto-Sivashinsky equation
 class KSPINN(nn.Module):
-    def __init__(self, hidden_layers=4, neurons=50):
+    def __init__(self, hidden_layers=4, neurons=50, device=device):
         super(KSPINN, self).__init__()
         
-        # Neural network architecture
-        layers = [nn.Linear(2, neurons), nn.Tanh()]  # Input: (x, t)
-        for _ in range(hidden_layers):
+        # Neural network architecture with Xavier initialization
+        layers = [nn.Linear(2, neurons)]
+        nn.init.xavier_normal_(layers[0].weight)
+        layers.append(nn.Tanh())  # Input: (x, t)
+        
+        for i in range(hidden_layers):
             layers.append(nn.Linear(neurons, neurons))
+            nn.init.xavier_normal_(layers[-1].weight)
             layers.append(nn.Tanh())
+        
         layers.append(nn.Linear(neurons, 1))  # Output: u(x, t)
+        nn.init.xavier_normal_(layers[-1].weight)
         
         self.net = nn.Sequential(*layers)
+        self.device = device
+        self.to(device)
     
     def forward(self, x, t):
         # Concatenate x and t
@@ -184,7 +194,7 @@ def generate_initial_condition(L, lyap_exps, nx=100):
     return x, u
 
 # Training function with Lyapunov spectrum regularization
-def train_ks_pinn(model, L, lyap_exps, n_epochs=10000, lr=1e-4, domain_type='periodic'):
+def train_ks_pinn(model, L, lyap_exps, n_epochs=10000, lr=1e-5, domain_type='periodic'):
     """
     Train the PINN model with regularization based on Lyapunov spectrum
     
@@ -196,13 +206,14 @@ def train_ks_pinn(model, L, lyap_exps, n_epochs=10000, lr=1e-4, domain_type='per
         lr: Learning rate
         domain_type: 'periodic' or 'oddperiodic'
     """
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, factor=0.5, verbose=True)
+    # Use a much smaller learning rate and weight decay for stability
+    optimizer = optim.Adam(model.parameters(), lr=1e-7, weight_decay=1e-8)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=200, factor=0.5, verbose=True)
     
     # Generate training points
     nx, nt = 50, 40
-    x_domain = torch.linspace(0, L, nx).reshape(-1, 1)
-    t_domain = torch.linspace(0, 5.0, nt).reshape(-1, 1)
+    x_domain = torch.linspace(0, L, nx).reshape(-1, 1).to(model.device)
+    t_domain = torch.linspace(0, 5.0, nt).reshape(-1, 1).to(model.device)
     
     # Create meshgrid for collocation points
     X, T = torch.meshgrid(x_domain.squeeze(), t_domain.squeeze(), indexing='ij')
@@ -211,81 +222,114 @@ def train_ks_pinn(model, L, lyap_exps, n_epochs=10000, lr=1e-4, domain_type='per
     
     # Generate initial condition from Lyapunov spectrum
     x_ic, u_ic = generate_initial_condition(L, lyap_exps)
-    x_ic_tensor = torch.tensor(x_ic, dtype=torch.float32).reshape(-1, 1)
-    u_ic_tensor = torch.tensor(u_ic, dtype=torch.float32).reshape(-1, 1)
+    # Scale down the initial condition to prevent large gradients
+    u_ic = u_ic * 0.1  
+    x_ic_tensor = torch.tensor(x_ic, dtype=torch.float32).reshape(-1, 1).to(model.device)
+    u_ic_tensor = torch.tensor(u_ic, dtype=torch.float32).reshape(-1, 1).to(model.device)
     t_ic_tensor = torch.zeros_like(x_ic_tensor)
     
     # Setup boundary conditions based on domain type
     if domain_type == 'periodic':
         # Periodic boundary conditions
-        x_left = torch.zeros(nt, 1)
-        x_right = torch.ones(nt, 1) * L
-        t_boundary = t_domain.repeat(2, 1)
-        
+        x_left = torch.zeros(nt, 1).to(model.device)
+        x_right = torch.ones(nt, 1).to(model.device) * L
+        t_boundary = t_domain
     else:  # 'oddperiodic'
         # Odd-periodic boundary (u = uxx = 0 at x=0,L)
-        x_left = torch.zeros(nt, 1)
-        x_right = torch.ones(nt, 1) * L
-        t_boundary = t_domain.repeat(2, 1)
+        x_left = torch.zeros(nt, 1).to(model.device)
+        x_right = torch.ones(nt, 1).to(model.device) * L
+        t_boundary = t_domain
     
-    # Loss weights
-    w_pde = 1.0
-    w_ic = 10.0
-    w_bc = 10.0
-    w_lyap = 0.1
+    # Loss weights - reduce PDE weight to start
+    w_pde = 0.01  # Start with a smaller weight for PDE residual
+    w_ic = 1.0
+    w_bc = 1.0
+    w_lyap = 0.0  # Disable Lyapunov regularization initially
     
     # Training loop
     losses = []
     
+    # Add gradient clipping to prevent exploding gradients
+    clip_value = 0.1  # Use a smaller clip value
+    
     for epoch in range(n_epochs):
         optimizer.zero_grad()
         
-        # PDE residual loss
-        residual = model.pde_residual(x_collocation, t_collocation)
-        loss_pde = torch.mean(torch.square(residual))
-        
-        # Initial condition loss
-        u_pred_ic = model(x_ic_tensor, t_ic_tensor)
-        loss_ic = torch.mean(torch.square(u_pred_ic - u_ic_tensor))
-        
-        # Boundary condition loss
-        if domain_type == 'periodic':
-            # Enforce u(0,t) = u(L,t) and u_x(0,t) = u_x(L,t)
-            u_left = model(x_left, t_domain)
-            u_right = model(x_right, t_domain)
+        # PDE residual loss - use a try-except to catch any numerical issues
+        try:
+            residual = model.pde_residual(x_collocation, t_collocation)
+            loss_pde = torch.mean(torch.square(residual))
             
-            u_x_left = model.u_x(x_left, t_domain)
-            u_x_right = model.u_x(x_right, t_domain)
+            # Initial condition loss
+            u_pred_ic = model(x_ic_tensor, t_ic_tensor)
+            loss_ic = torch.mean(torch.square(u_pred_ic - u_ic_tensor))
             
-            loss_bc = torch.mean(torch.square(u_left - u_right)) + \
-                      torch.mean(torch.square(u_x_left - u_x_right))
-        else:  # 'oddperiodic'
-            # Enforce u = 0 and u_xx = 0 at x=0,L
-            u_boundary = model(torch.cat([x_left, x_right]), t_boundary)
-            u_xx_boundary = model.u_xx(torch.cat([x_left, x_right]), t_boundary)
+            # Boundary condition loss
+            if domain_type == 'periodic':
+                # Enforce u(0,t) = u(L,t) and u_x(0,t) = u_x(L,t)
+                u_left = model(x_left, t_boundary)
+                u_right = model(x_right, t_boundary)
+                
+                u_x_left = model.u_x(x_left, t_boundary)
+                u_x_right = model.u_x(x_right, t_boundary)
+                
+                loss_bc = torch.mean(torch.square(u_left - u_right)) + \
+                          torch.mean(torch.square(u_x_left - u_x_right))
+            else:  # 'oddperiodic'
+                # Enforce u = 0 and u_xx = 0 at x=0,L
+                u_boundary = model(torch.cat([x_left, x_right]), torch.cat([t_boundary, t_boundary]))
+                u_xx_boundary = model.u_xx(torch.cat([x_left, x_right]), torch.cat([t_boundary, t_boundary]))
+                
+                loss_bc = torch.mean(torch.square(u_boundary)) + \
+                          torch.mean(torch.square(u_xx_boundary))
             
-            loss_bc = torch.mean(torch.square(u_boundary)) + \
-                      torch.mean(torch.square(u_xx_boundary))
-        
-        # Lyapunov regularization
-        # In a complete implementation, this would involve estimating Lyapunov exponents
-        # from the model predictions and comparing with the provided data
-        # Here we use a placeholder
-        loss_lyap = torch.tensor(0.0)
-        
-        # Total loss
-        loss = w_pde * loss_pde + w_ic * loss_ic + w_bc * loss_bc + w_lyap * loss_lyap
-        
-        loss.backward()
-        optimizer.step()
-        scheduler.step(loss)
-        
-        # Record the loss
-        losses.append(loss.item())
-        
-        if epoch % 100 == 0:
-            print(f"Epoch {epoch}, Loss: {loss.item():.6f}, "
-                 f"PDE: {loss_pde.item():.6f}, IC: {loss_ic.item():.6f}, BC: {loss_bc.item():.6f}")
+            # Lyapunov regularization - disabled initially
+            loss_lyap = torch.tensor(0.0).to(model.device)
+            
+            # Total loss
+            loss = w_pde * loss_pde + w_ic * loss_ic + w_bc * loss_bc + w_lyap * loss_lyap
+            
+            # Check for NaN loss and skip this iteration if found
+            if torch.isnan(loss).item() or torch.isinf(loss).item():
+                raise ValueError("NaN or Inf loss detected")
+                
+            loss.backward()
+            
+            # Apply gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
+            
+            optimizer.step()
+            scheduler.step(loss)
+            
+            # Record the loss
+            losses.append(loss.item())
+            
+            # Gradually increase PDE weight if training is stable
+            if epoch % 500 == 0 and epoch > 0 and w_pde < 1.0:
+                w_pde = min(1.0, w_pde * 2)
+                print(f"Increasing PDE weight to {w_pde}")
+            
+            if epoch % 100 == 0:
+                print(f"Epoch {epoch}, Loss: {loss.item():.6f}, "
+                     f"PDE: {loss_pde.item():.6f}, IC: {loss_ic.item():.6f}, BC: {loss_bc.item():.6f}")
+                
+        except Exception as e:
+            print(f"Warning at epoch {epoch}: {str(e)}. Reducing learning rate and reinitializing optimizer.")
+            # Reduce learning rate on error
+            for param_group in optimizer.param_groups:
+                param_group['lr'] *= 0.5
+            print(f"New learning rate: {optimizer.param_groups[0]['lr']}")
+            
+            # If learning rate becomes too small, reinitialize the model
+            if optimizer.param_groups[0]['lr'] < 1e-10:
+                print("Learning rate too small, reinitializing model weights...")
+                # Reinitialize model weights
+                for layer in model.net:
+                    if isinstance(layer, nn.Linear):
+                        nn.init.xavier_normal_(layer.weight, gain=0.01)
+                        layer.bias.data.fill_(0.0)
+                # Reset optimizer
+                optimizer = optim.Adam(model.parameters(), lr=1e-7, weight_decay=1e-8)
     
     return losses
 
@@ -301,13 +345,13 @@ def visualize_solution(model, L, t_values=[0, 1, 2, 3, 4]):
     """
     model.eval()
     nx = 200
-    x = torch.linspace(0, L, nx).reshape(-1, 1)
+    x = torch.linspace(0, L, nx).reshape(-1, 1).to(model.device)
     
     plt.figure(figsize=(12, 8))
     for t_val in t_values:
         t = torch.ones_like(x) * t_val
-        u = model(x, t).detach().numpy()
-        plt.plot(x.numpy(), u, label=f't = {t_val}')
+        u = model(x, t).detach().cpu().numpy()
+        plt.plot(x.cpu().numpy(), u, label=f't = {t_val}')
     
     plt.title(f'Kuramoto-Sivashinsky Solution (L = {L})')
     plt.xlabel('x')
@@ -328,7 +372,11 @@ def visualize_solution(model, L, t_values=[0, 1, 2, 3, 4]):
         t_tensor = torch.ones(len(x_values), 1) * t_val
         x_tensor = torch.tensor(x_values, dtype=torch.float32).reshape(-1, 1)
         
-        u_pred = model(x_tensor, t_tensor).detach().numpy().flatten()
+        # Move tensors to GPU
+        t_tensor = t_tensor.to(model.device)
+        x_tensor = x_tensor.to(model.device)
+        
+        u_pred = model(x_tensor, t_tensor).detach().cpu().numpy().flatten()
         U[:, i] = u_pred
     
     plt.figure(figsize=(12, 8))
@@ -362,11 +410,11 @@ def calculate_lyapunov_from_pinn(model, L, domain_type='periodic', n_exponents=2
     # Placeholder calculation
     model.eval()
     nx = 100
-    x = torch.linspace(0, L, nx).reshape(-1, 1)
+    x = torch.linspace(0, L, nx).reshape(-1, 1).to(model.device)
     t = torch.ones_like(x) * 10.0  # After sufficient time for dynamics to develop
     
     # Get the solution and its derivatives
-    u = model(x, t).detach().numpy()
+    u = model(x, t).detach().cpu().numpy()
     
     # Simplified estimation (in practice would implement the full algorithm)
     lyap_estimates = np.zeros(n_exponents)
@@ -418,7 +466,7 @@ def compare_lyapunov_spectra(true_lyap, pred_lyap):
     plt.close()
 
 # Main function to execute the workflow
-def main(downloads_dir, L=None, domain_type='periodic', hidden_layers=4, neurons=50, n_epochs=5000):
+def main(downloads_dir, L=None, domain_type='periodic', hidden_layers=8, neurons=80, n_epochs=10000):
     """
     Main function to execute the full workflow
     
@@ -458,7 +506,9 @@ def main(downloads_dir, L=None, domain_type='periodic', hidden_layers=4, neurons
     # Create and train the model
     model = KSPINN(hidden_layers=hidden_layers, neurons=neurons)
     print(f"Training PINN model for {n_epochs} epochs...")
-    losses = train_ks_pinn(model, L, lyap_exps, n_epochs=n_epochs, domain_type=domain_type)
+    
+    # Use a smaller learning rate to prevent NaN issues
+    losses = train_ks_pinn(model, L, lyap_exps, n_epochs=n_epochs, lr=1e-6, domain_type=domain_type)
     
     # Save the model
     torch.save(model.state_dict(), f'ks_pinn_model_{domain_type}_L{L}.pth')
@@ -488,17 +538,17 @@ def main(downloads_dir, L=None, domain_type='periodic', hidden_layers=4, neurons
 
 if __name__ == "__main__":
     # Path to your downloads directory
-    downloads_dir = os.path.expanduser("~/ChaosPINN/Data")
+    downloads_dir = os.path.expanduser("Data")
     
     # You can specify a particular L value or leave as None to use the first available
-    L = None  # e.g., 97.4
+    L = 10.0  # Use a specific L value that's well-studied
     
     # Choose domain type: 'periodic' or 'oddperiodic'
     domain_type = 'periodic'
     
-    # For faster execution on CPU, reduce these parameters
+    # Use a smaller model initially for stability
     hidden_layers = 3
-    neurons = 40
-    n_epochs = 1000  # Reduce for quicker testing, increase for better results
+    neurons = 64
+    n_epochs = 5000
     
     main(downloads_dir, L, domain_type, hidden_layers, neurons, n_epochs)
