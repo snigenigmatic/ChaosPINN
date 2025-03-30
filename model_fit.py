@@ -231,9 +231,9 @@ class KuramotoSivashinskySupervisedLearning:
             'domain_size': self.domain_size
         }, path)
 
-    def load_model(self, path="ks_supervised_model.pt"):
+    def load_model(self, path="ks_supervised_model.pt", map_location=None):
         """Load a trained model."""
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=map_location)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.domain_size = checkpoint['domain_size']
@@ -311,22 +311,19 @@ def compare_solutions(model_solution, reference_solution, x, t):
     plt.close()
 
 
-def test_against_reference_solution(model_solution, reference_solution, threshold=0.1):
+def test_against_reference_solution(model_solution, reference_solution, threshold=0.1, return_metrics=False):
     """
     Test the model solution against a reference solution.
     Returns True if the model performs adequately, False otherwise.
+    If return_metrics is True, returns detailed metrics as well.
     """
     # Calculate the mean absolute error
     abs_error = np.abs(model_solution - reference_solution)
     mae = np.mean(abs_error)
 
-    print(f"Mean Absolute Error: {mae:.6f}")
-
     # Calculate the normalized root mean square error
     rmse = np.sqrt(np.mean((model_solution - reference_solution)**2))
     norm_rmse = rmse / (np.max(reference_solution) - np.min(reference_solution))
-
-    print(f"Normalized RMSE: {norm_rmse:.6f}")
 
     # Calculate the temporal correlation at each spatial point
     nt, nx = model_solution.shape
@@ -337,7 +334,6 @@ def test_against_reference_solution(model_solution, reference_solution, threshol
         temporal_correlations[i] = correlation if not np.isnan(correlation) else 0
 
     avg_temporal_correlation = np.mean(temporal_correlations)
-    print(f"Average Temporal Correlation: {avg_temporal_correlation:.6f}")
 
     # Calculate the spatial correlation at each time point
     spatial_correlations = np.zeros(nt)
@@ -347,7 +343,6 @@ def test_against_reference_solution(model_solution, reference_solution, threshol
         spatial_correlations[i] = correlation if not np.isnan(correlation) else 0
 
     avg_spatial_correlation = np.mean(spatial_correlations)
-    print(f"Average Spatial Correlation: {avg_spatial_correlation:.6f}")
 
     # Overall score
     overall_score = (
@@ -356,9 +351,17 @@ def test_against_reference_solution(model_solution, reference_solution, threshol
         avg_spatial_correlation * 0.3
     )
 
-    print(f"Overall Score: {overall_score:.6f} (higher is better)")
+    passed = overall_score > 0.7  # Threshold for passing the test
 
-    return overall_score > 0.7  # Threshold for passing the test
+    if return_metrics:
+        return mae, norm_rmse, avg_temporal_correlation, avg_spatial_correlation, overall_score, passed
+    else:
+        print(f"Mean Absolute Error: {mae:.6f}")
+        print(f"Normalized RMSE: {norm_rmse:.6f}")
+        print(f"Average Temporal Correlation: {avg_temporal_correlation:.6f}")
+        print(f"Average Spatial Correlation: {avg_spatial_correlation:.6f}")
+        print(f"Overall Score: {overall_score:.6f} (higher is better)")
+        return overall_score > 0.7  # Threshold for passing the test
 
 
 def plot_training_history(train_losses, val_losses):
