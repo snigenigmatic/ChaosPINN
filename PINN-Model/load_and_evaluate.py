@@ -6,20 +6,20 @@ import matplotlib.pyplot as plt
 from paste import KuramotoSivashinskyPhysicsEnhanced
 
 # Create a new model instance 
-ks_model = KuramotoSivashinskyPhysicsEnhanced(device='cpu')
+ks_model = KuramotoSivashinskyPhysicsEnhanced(device='cuda')
 
-# Modify the load_model method to specifically handle loading from CUDA to CPU
-def load_model_cpu(self, path):
-    """Load a trained model with CPU mapping."""
-    checkpoint = torch.load(path, map_location=torch.device('cpu'))
+# Modify the load_model method to specifically handle loading from CUDA to cuda
+def load_model_cuda(self, path):
+    """Load a trained model with cuda mapping."""
+    checkpoint = torch.load(path, map_location=torch.device('cuda'))
     self.model.load_state_dict(checkpoint['model_state_dict'])
     self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     self.domain_size = checkpoint['domain_size']
-    self.device = 'cpu'
-    self.model = self.model.to('cpu')
+    self.device = 'cuda'
+    self.model = self.model.to('cuda')
 
 # Monkey patch the load_model method
-ks_model.load_model = lambda path: load_model_cpu(ks_model, path)
+ks_model.load_model = lambda path: load_model_cuda(ks_model, path)
 
 # Load the saved model weights with the patched method
 ks_model.load_model(path="./ks_physics_enhanced_model.pt")

@@ -493,7 +493,7 @@ def main():
 
     # Train the model with physics-enhanced supervised learning
     print("Training the model with physics-enhanced supervised learning...")
-    train_losses, val_losses, physics_losses = ks_model.train(epochs=500, batch_size=1024, nx=100, nt=50)
+    train_losses, val_losses, physics_losses = ks_model.train(epochs=1500, batch_size=1024, nx=100, nt=50)
 
     # Save the trained model
     ks_model.save_model()
