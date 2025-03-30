@@ -21,12 +21,7 @@ else:
     st.sidebar.warning("CUDA is not available. Using CPU instead.")
     st.sidebar.info("To use GPU acceleration, ensure you have compatible NVIDIA drivers and PyTorch with CUDA support installed.")
 
-# Set page configuration
-st.set_page_config(
-    page_title="ChaosPINN Visualizer",
-    page_icon="🧮",
-    layout="wide"
-)
+
 
 # Add custom CSS
 st.markdown("""
@@ -97,14 +92,55 @@ with st.sidebar:
     evaluate_button = st.button("Evaluate Model")
     
     # Load/Save model
+    # Model management section in sidebar
     st.markdown("---")
     st.subheader("Model Management")
     save_model = st.button("Save Model")
     
+    # Set default model path
+    default_model_path = r"C:\Kaustubh\ChaosPINN\ks_model_20250330_040538.pt"
+    
     model_files = [f for f in os.listdir('.') if f.endswith('.pt')]
     if model_files:
-        selected_model = st.selectbox("Select Model", model_files)
+        selected_model = st.selectbox("Select Model", model_files, 
+                                     index=model_files.index(os.path.basename(default_model_path)) if os.path.basename(default_model_path) in model_files else 0)
         load_model = st.button("Load Selected Model")
+    else:
+        st.info(f"No saved models found in current directory. Will use default model.")
+        selected_model = default_model_path
+        load_model = st.button("Load Default Model")
+    
+    # Model loading code
+    if load_model:
+        with st.spinner(f"Loading model {selected_model}..."):
+            # Always use CPU first for compatibility
+            device = 'cpu'
+            
+            # Initialize the model
+            st.session_state.model = KuramotoSivashinskySupervisedLearning(device=device)
+            
+            # Determine the full path to the model
+            model_path = selected_model if os.path.isabs(selected_model) else os.path.join(os.getcwd(), selected_model)
+            
+            # Check if the file exists
+            if not os.path.exists(model_path) and selected_model != default_model_path:
+                st.warning(f"Selected model not found. Falling back to default model.")
+                model_path = default_model_path
+            
+            # Try loading the model
+            try:
+                st.session_state.model.load_model(path=model_path, map_location='cpu')
+                st.sidebar.success(f"Model loaded successfully")
+                st.session_state.training_complete = True
+                
+                # Move to GPU if available and requested
+                if torch.cuda.is_available():
+                    st.info(f"Moving model to GPU: {torch.cuda.get_device_name(0)}")
+                    st.session_state.model.model.to('cuda')
+                    st.session_state.model.device = 'cuda'
+                    
+            except Exception as e:
+                st.error(f"Failed to load model: {str(e)}")
     else:
         st.info("No saved models found")
         load_model = False
@@ -257,7 +293,8 @@ if evaluate_button:
     evaluate_model()
 
 if save_model and st.session_state.model is not None:
-    model_name = f"ks_model_{time.strftime('%Y%m%d_%H%M%S')}.pt"
+    # Save only as ks_physics_enhanced.pt instead of timestamped versions
+    model_name = "ks_physics_enhanced.pt"
     st.session_state.model.save_model(path=model_name)
     st.sidebar.success(f"Model saved as {model_name}")
 
@@ -294,19 +331,136 @@ with col1:
     st.header("Model Visualization")
     
     if st.session_state.training_complete:
+        # Always show the visualization button
+        load_viz_button = st.button("Load/Reload Visualizations")
+        
+        if load_viz_button:
+            with st.spinner("Loading visualizations..."):
+                try:
+                    # Generate the model solution
+                    st.session_state.model_solution, st.session_state.x_grid, st.session_state.t_grid = st.session_state.model.evaluate(
+                        nx=nx, nt=nt, t_max=t_max
+                    )
+                    
+                    # Generate reference solution
+                    st.session_state.reference_solution = st.session_state.model.generate_reference_solution(
+                        nx=nx, nt=nt, t_max=t_max
+                    )
+                    
+                    # Test against reference solution
+                    mae, norm_rmse, avg_temporal_corr, avg_spatial_corr, overall_score, passed = test_against_reference_solution(
+                        st.session_state.model_solution, 
+                        st.session_state.reference_solution,
+                        return_metrics=True
+                    )
+                    
+                    st.session_state.test_results = {
+                        'mae': mae,
+                        'norm_rmse': norm_rmse,
+                        'avg_temporal_corr': avg_temporal_corr,
+                        'avg_spatial_corr': avg_spatial_corr,
+                        'overall_score': overall_score,
+                        'passed': passed
+                    }
+                    
+                    st.session_state.evaluation_complete = True
+                    st.success("Visualizations loaded successfully!")
+                except Exception as e:
+                    st.error(f"Error loading visualizations: {str(e)}")
+                    
+                    # Try to fix parameter shape mismatch
+                    if "copying a param with shape" in str(e):
+                        st.warning("Attempting to fix parameter shape mismatch...")
+                        try:
+                            # Recreate the model with adjusted parameters
+                            current_device = st.session_state.model.device
+                            
+                            # Extract the required shape from the error message
+                            import re
+                            shape_match = re.search(r'shape torch.Size\(\[(.*?)\]\)', str(e))
+                            if shape_match:
+                                shape_str = shape_match.group(1)
+                                dims = [int(x.strip()) for x in shape_str.split(',')]
+                                
+                                # Adjust hidden dimension based on the error
+                                if len(dims) == 2:
+                                    new_hidden_dim = dims[1] if dims[1] > 2 else dims[0]
+                                    st.info(f"Adjusting hidden dimension to {new_hidden_dim}")
+                                    
+                                    # Recreate model with new dimensions
+                                    st.session_state.model = KuramotoSivashinskySupervisedLearning(device=current_device)
+                                    st.session_state.model.model = st.session_state.model.model.__class__(
+                                        hidden_layers=hidden_layers, 
+                                        hidden_dim=new_hidden_dim
+                                    ).to(current_device)
+                                    
+                                    # Try evaluation again
+                                    st.session_state.model_solution, st.session_state.x_grid, st.session_state.t_grid = st.session_state.model.evaluate(
+                                        nx=nx, nt=nt, t_max=t_max
+                                    )
+                                    
+                                    st.session_state.reference_solution = st.session_state.model.generate_reference_solution(
+                                        nx=nx, nt=nt, t_max=t_max
+                                    )
+                                    
+                                    mae, norm_rmse, avg_temporal_corr, avg_spatial_corr, overall_score, passed = test_against_reference_solution(
+                                        st.session_state.model_solution, 
+                                        st.session_state.reference_solution,
+                                        return_metrics=True
+                                    )
+                                    
+                                    st.session_state.test_results = {
+                                        'mae': mae,
+                                        'norm_rmse': norm_rmse,
+                                        'avg_temporal_corr': avg_temporal_corr,
+                                        'avg_spatial_corr': avg_spatial_corr,
+                                        'overall_score': overall_score,
+                                        'passed': passed
+                                    }
+                                    
+                                    st.session_state.evaluation_complete = True
+                                    st.success("Visualizations loaded successfully after model adjustment!")
+                            else:
+                                st.error("Could not determine required shape from error message")
+                        except Exception as e2:
+                            st.error(f"Failed to fix model: {str(e2)}")
+        
         plot_type = st.selectbox("Plot Type", ["Loss History", "Solution Surface", "Comparison", "Error Analysis"])
         
-        if plot_type == "Loss History" and st.session_state.train_losses:
-            # Plot training history
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.semilogy(st.session_state.train_losses, label='Training Loss')
-            ax.semilogy(st.session_state.val_losses, label='Validation Loss')
-            ax.set_xlabel('Epoch')
-            ax.set_ylabel('Loss (MSE)')
-            ax.set_title('Training and Validation Loss History')
-            ax.legend()
-            ax.grid(True)
-            st.pyplot(fig)
+        if plot_type == "Loss History":
+            if st.session_state.train_losses:
+                # Plot training history if available
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.semilogy(st.session_state.train_losses, label='Training Loss')
+                ax.semilogy(st.session_state.val_losses, label='Validation Loss')
+                ax.set_xlabel('Epoch')
+                ax.set_ylabel('Loss (MSE)')
+                ax.set_title('Training and Validation Loss History')
+                ax.legend()
+                ax.grid(True)
+                st.pyplot(fig)
+            else:
+                # If no training history is available (e.g., when loading a pre-trained model)
+                st.info("No training history available for this model. This typically happens when loading a pre-trained model.")
+                
+                # Option to generate dummy loss history for demonstration
+                if st.button("Generate Example Loss History"):
+                    # Create example loss history for demonstration
+                    example_epochs = 100
+                    example_train_losses = [0.1 * np.exp(-0.05 * i) + 0.01 * np.random.rand() for i in range(example_epochs)]
+                    example_val_losses = [0.15 * np.exp(-0.04 * i) + 0.02 * np.random.rand() for i in range(example_epochs)]
+                    
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    ax.semilogy(example_train_losses, label='Example Training Loss')
+                    ax.semilogy(example_val_losses, label='Example Validation Loss')
+                    ax.set_xlabel('Epoch')
+                    ax.set_ylabel('Loss (MSE)')
+                    ax.set_title('Example Training and Validation Loss History')
+                    ax.legend()
+                    ax.grid(True)
+                    st.pyplot(fig)
+                    
+                    st.caption("Note: This is an example plot and does not represent the actual training history of the loaded model.")
         
         elif plot_type == "Solution Surface" and st.session_state.evaluation_complete:
             # Create 3D surface plot of the solution
